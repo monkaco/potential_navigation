@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(tangent_bug)
+project(potential)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -10,6 +10,7 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   std_msgs
   geometry_msgs
+  tf
 )
 
 ## System dependencies are found with CMake's conventions
@@ -96,31 +97,20 @@ catkin_package(
 ## Your package locations should be listed before other locations
 # include_directories(include)
 include_directories(
+  include
   ${catkin_INCLUDE_DIRS}
 )
 
 ## Declare a cpp library
-# add_library(tangent_bug
-#   src/${PROJECT_NAME}/tangent_bug.cpp
-# )
+ add_library(robotLib
+   src/robot.cpp
+ )
 
 ## Declare a cpp executable
- add_executable(bubble_bug src/bubble_bug.cpp)
+ add_executable(potential_node src/potential.cpp)
 
- target_link_libraries(bubble_bug
-   ${catkin_LIBRARIES}
- )
- add_executable(tangent_bug src/tangent_bug.cpp)
-
- target_link_libraries(tangent_bug
-   ${catkin_LIBRARIES}
- )
-## Add cmake target dependencies of the executable/library
-## as an example, message headers may need to be generated before nodes
-#add_dependencies(bubble_bug tangent_bug_generate_messages_cpp)
-#add_dependencies(tangent_bug tangent_bug_generate_messages_cpp)
-## Specify libraries to link a library or executable target against
- target_link_libraries(tangent_bug
+ target_link_libraries(potential_node
+   robotLib
    ${catkin_LIBRARIES}
  )
 
