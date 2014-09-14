@@ -1,4 +1,5 @@
 #include <potential/robot.h>
+//#include <potential/potential.h>
 #include "ros/ros.h" 
 #include <nav_msgs/MapMetaData.h>
 #include <nav_msgs/GetMap.h>
@@ -114,22 +115,32 @@ public:
         laser = *msg;
     } 
     
-    pose_xy getMinimumDistanceRobotToPoint (robot& dummy_pose, robot& robot_pose)
+    pose_xy getMinimumDistanceRobotToPoint (pose_xy dummy_pose, pose_xy robot_pose)
     {
         float minimum = laser.range_max;
         int min_index = 0;
+        pose_xy point;
+
+        printf("range: %1.2f \t laser.range.size: %2d\n", -1.23,laser.ranges.size());
         for(int i = 0; i < laser.ranges.size(); i++)
         {
-            if (laser.ranges[i] > laser.range_min && laser.ranges[i] < minimum){
+            ROS_INFO("Dentro do for");
+            if (laser.ranges[i] > laser.range_min && laser.ranges[i] < minimum)
+            {
                 minimum = laser.ranges[i];
                 min_index = i;
+                // printf("range: %1.2f \t min_index: %2d\n", minimum,min_index);
+                ROS_INFO("Dentro do IF");
             }
         }
-        pose_xy point;
-        double ang_point =robot_pose.heading - (laser.angle_increment * min_index + laser.angle_min);
 
-        point.x = robot_pose.pose.x + minimum*cos(ang_point);
-        point.y = robot_pose.pose.y + minimum*sin(ang_point);
+        double ang_point = robot_pose.heading - (laser.angle_increment * min_index + laser.angle_min);
+
+        // point.x = robot_pose.x + minimum*cos(ang_point);
+        // point.y = robot_pose.y + minimum*sin(ang_point);
+        // ROS_INFO("Laser method");
+        point.x = minimum*cos(ang_point);
+        point.y = minimum*sin(ang_point);
         point.heading = ang_point;
 
         return point;
@@ -200,7 +211,7 @@ public:
     }
     
 
-    /*
+    
     pose_xy findClosestTangentPoint(pose_xy goal, pose_xy robot_pose)
     {
 
@@ -232,7 +243,7 @@ public:
         }
         return minPoint;
     }
-    */
+    
 
 };
 
@@ -295,38 +306,44 @@ protected:
     int ID; 
 }; 
 
-class Potential
+
+class Potential 
 {
     public:
         /* Variable declarations */
-        robot& robo;
-        goal& alvo;
+        pose_xy& robo;
+        pose_xy& alvo;
         double transition_threshold;
         double obstacle_range_threshold;
         double k_gain;
 
+        // Potential(){
+        // transition_threshold = 0;
+        // } 
+
         /* Methods */
-        double getAngularDistance () 
+
+        static double getAngularDistance (pose_xy robo, pose_xy alvo) 
         { 
-            return atan2(alvo.pose.y - robo.pose.y, \
-                        alvo.pose.x - robo.pose.x) \
+            return atan2(alvo.y - robo.y, \
+                        alvo.x - robo.x) \
                         -robo.heading; 
         } 
 
-        double getLinearDistance () 
+        static double getLinearDistance (pose_xy robo, pose_xy alvo) 
         { 
-            return sqrt(pow(alvo.pose.x - robo.pose.x, 2) \
-                    + pow(alvo.pose.y - robo.pose.y, 2)); 
+            return sqrt(pow(alvo.x - robo.x, 2) \
+                    + pow(alvo.y - robo.y, 2)); 
         }
 
         /* ATTRACTIVE POTENTIAL */
-        bool Conic_Quadratic_transition ()
+        static bool Conic_Quadratic_transition (pose_xy robo, pose_xy alvo, double trans_threshold) 
         {
             bool returnval;
             double dist;
 
-            dist = getLinearDistance ();
-            if (dist <= transition_threshold)
+            dist = getLinearDistance (robo, alvo);
+            if (dist <= trans_threshold)
             {
                 returnval = true;  /* Quadratic */
             }
@@ -337,16 +354,17 @@ class Potential
                 return returnval;
         }
 
-        double Attractive_Potential ()
+        static double Attractive_Potential (pose_xy robo, pose_xy alvo, double trans_threshold) 
         {
             double returnval;
             double d_goal_star;
             double dist;
+            double k_gain = 1.0;
 
-            d_goal_star = transition_threshold;
-            dist = getLinearDistance ();
+            d_goal_star = trans_threshold;
+            dist = getLinearDistance (robo, alvo) ;
 
-            if (Conic_Quadratic_transition ())  /* true -> quadratic function */
+            if (Conic_Quadratic_transition (robo, alvo, trans_threshold))  /* true -> quadratic function */
             {
                 returnval = (1/2) * k_gain * pow (dist, 2);
             }
@@ -358,36 +376,47 @@ class Potential
             return returnval;
         }
 
-        Vector2 Gradient_Attractive ()
+        static pose_xy Gradient_Attractive (pose_xy robo, pose_xy alvo, double trans_threshold) 
         {
-            Vector2 returnval;
+            pose_xy returnval;
             double dist;
-            double d_goal_star = transition_threshold;
+            double d_goal_star = trans_threshold;
+            double k_gain = 0.5;
             
-            dist = getLinearDistance ();
+            dist = getLinearDistance (robo, alvo) ;
 
-            if (Conic_Quadratic_transition ())  /* true -> quadratic function */
+            if (Conic_Quadratic_transition (robo, alvo, trans_threshold))  /* true -> quadratic function */
             {
-                returnval.x = k_gain * (robo.pose.x - alvo.pose.x);
-                returnval.y = k_gain * (robo.pose.y - alvo.pose.y);
+                returnval.x = k_gain * (alvo.x - robo.x);
+                returnval.y = k_gain * (alvo.y - robo.y);
             }
             else                                /* false -> conic function */
             {
-                returnval.x = d_goal_star * k_gain * (robo.pose.x - alvo.pose.x)/dist;
-                returnval.y = d_goal_star * k_gain * (robo.pose.y - alvo.pose.y)/dist;
+                returnval.x = d_goal_star * k_gain * (alvo.x - robo.x)/dist;
+                returnval.y = d_goal_star * k_gain * (alvo.y - robo.y)/dist;
             }
 
             return returnval;
         }
 
+        static pose_xy Force_Attractive (pose_xy grad_Attractive) 
+        {
+            pose_xy returnval;
+            
+            returnval.x = (-1) * grad_Attractive.x;
+            returnval.y = (-1) * grad_Attractive.y;
+
+            return returnval;
+        }
+
         /* REPULSIVE POTENTIAL */
-        bool Obstacle_within_range ()
+        static bool Obstacle_within_range (pose_xy robo, pose_xy alvo, double obs_threshold)
         {
             bool returnval;
             double dist;
 
-            dist = getLinearDistance ();
-            if (dist <= obstacle_range_threshold)
+            dist = getLinearDistance (robo, alvo);
+            if (dist <= obs_threshold)
             {
                 returnval = true;  /* Obstacle within range */
             }
@@ -399,18 +428,18 @@ class Potential
             return returnval;
         }
 
-        double Repulsive_Potential ()
+        static double Repulsive_Potential (pose_xy robo, pose_xy alvo, double obs_threshold)
         {
             double returnval;
             double dist;
             double eta = 1.0; /* Repulsive gain */
             double d_obs;   /* Distance obtained from the map (algorithm brushfire) */
-            double Q_star = obstacle_range_threshold;
+            double Q_star = obs_threshold;
 
             /* Treat this situation */
-            //dist = getLinearDistance (1/d_obs, 1/Q_star);
+            dist = getLinearDistance (1/d_obs, 1/Q_star);
 
-            if (Obstacle_within_range ())   /* true -> within range */
+            if (Obstacle_within_range (robo, alvo, obs_threshold))   /* true -> within range */
             {
                 returnval = (1/2) * eta * pow( dist, 2);
             }
@@ -422,7 +451,7 @@ class Potential
             return returnval;
          }
 
-         Vector2 Gradient_Repulsive ()
+        static pose_xy Gradient_Repulsive (pose_xy robo, pose_xy alvo)
         {
             
             // Q_star = obstacle_range_threshold;
@@ -430,7 +459,7 @@ class Potential
 
             // dist = getLinearDistance (1/d_obs, 1/Q_star);
 
-            // if (Obstacle_within_range ())  /* true -> within range */
+            // if (Obstacle_within_range (robo, alvo))  /* true -> within range */
             // {
             //    returnval = eta * dist * ( 1/pow(d_obs, 2) ) * Gradient_Obstacle(q_robot);
             // }
@@ -442,8 +471,17 @@ class Potential
             // return returnval;
         }
             
+        static pose_xy Force_Repulsive (pose_xy grad_Repulsive) 
+        {
+            pose_xy returnval;
+            
+            returnval.x = (-1) * grad_Repulsive.x;
+            returnval.y = (-1) * grad_Repulsive.y;
 
-        Vector2 Gradient_Obstacle ()
+            return returnval;
+        }
+
+        static pose_xy Gradient_Obstacle ()
         {
             //static returnval;
             //static c_point = obst_closest_point;
@@ -452,6 +490,16 @@ class Potential
             //returnval = (q_robot.x - c_point.x, q_robot.y - c_point.y)/dist; 
 
             //return returnval;
+        }
+
+        static pose_xy Force_Total (pose_xy grad_Attractive, pose_xy grad_Repulsive) 
+        {
+            pose_xy returnval;
+            
+            returnval.x = grad_Attractive.x + grad_Repulsive.x;
+            returnval.y = grad_Attractive.y + grad_Repulsive.y;
+
+            return returnval;
         }
 
 };
@@ -509,43 +557,30 @@ int main(int argc, char **argv)
     StageBot goal(n, 1); 
     Controller controller; 
 
-    // ros::init(argc, argv, "controller"); 
-    // ros::NodeHandle nh; 
-    // // Create a client object for the spawn service . This
-    // // needs to know the data type of the service and its
-    // // name.
-    // ros::ServiceClient mapClient  = nh.serviceClient <nav_msgs::GetMap>("potential.map");
-    // // Create the request and response objects.
-    // nav_msgs::GetMap::Request req_map;
-    // nav_msgs::GetMap::Response resp_map;
-    // // Fill in the request data members .
-    // // req.x = 2;
-    // // req.y = 3;
-    // // req.theta = M_PI / 2 ;
-    // // req.name = " Leo " ;
-    // // Actually call the service . This won't return until
-    // // the service is complete .
-    // bool success = mapClient.call (req_map, resp_map);
-    // // Check for success and use the response.
-    // if ( success ) 
-    // {
-    // ROS_INFO_STREAM( "Map read");
-    // } 
-    // else
-    // {
-    // ROS_ERROR_STREAM( "Failed to read map." );
-    // }
-
-    double K = 1; 
+    double K = 2.0; 
     pose_xy Oi, goalRobotV;
     double dist;
     double last_dist=0;
 
     double dReached, dFollow;
     pose_xy dFollowp;
+    pose_xy robo;
+    pose_xy alvo;
 
-    // potential U_att;
-    // potential U_rep;
+    Potential pot();
+    Laser laser1;
+    double transition_threshold = 0.4;
+    double obstacle_range_threshold = 2.0;
+    double U_att;
+    double U_rep;
+    double U_tot;
+    bool res;
+    pose_xy grad_U_att;
+    pose_xy grad_U_rep;
+    pose_xy force_att;
+    pose_xy force_rep;
+    pose_xy force_tot;
+    pose_xy laser_dist;
     // U_att = Attractive_Potential ():
     // U_rep = Repulsive_Potential ();
     // U_tot = U_att + U_rep;
@@ -562,8 +597,8 @@ int main(int argc, char **argv)
     { 
     	rate.sleep();
     	ros::spinOnce();
-		
 
+        Laser::laserCallback();
 
         
     	if (pose_xy::getLinearDistance(goal.base, robot.base) < 0.1)
@@ -576,9 +611,41 @@ int main(int argc, char **argv)
 		}
 		else
 		{
+
+            U_att = Potential::Attractive_Potential (robot.base, goal.base, transition_threshold);
+            U_rep = Potential::Repulsive_Potential (robot.base, goal.base, obstacle_range_threshold);
+            U_tot = U_att + U_rep;
+
+            grad_U_att = Potential::Gradient_Attractive (robot.base, goal.base, transition_threshold);
+            force_att = Potential::Force_Attractive (grad_U_att);
+            robot.move(0,0);
+
+            //laser_dist = Laser::getMinimumDistanceRobotToPoint (goal.base, robot.base);
+            laser_dist = laser1.getMinimumDistanceRobotToPoint (goal.base, robot.base);
+
+            printf("goal->  x: %1.2f \t y: %1.2f\n robot-> x: %1.2f \t y: %1.2f\n laser_dist.x: %1.2f\t laser_dist.y: %1.2f\t U_tot: %1.2f\n", goal.base.x, goal.base.y, robot.base.x, robot.base.y, laser_dist.x, laser_dist.y, U_tot);
+            ROS_INFO("ELSE TRUTA!");
+            
+            // U_att = Potential::Attractive_Potential(robot.base,goal.base);
+            // U_att = pot.Attractive_Potential (robo, alvo);
+            // grad_U_att = pot.Gradient_Attractive (robo, alvo);
+
+            // alvo = Laser::getMinimumDistanceRobotToPoint(dFollowp,robo);
+            
+            
+            // dFollowp = Potential::getAngularDistance (robot.base, goal.base);
+            // U_att = Potential::Attractive_Potential (robot.base, goal.base, K);
+            // printf("goal->  x: %1.2f \t y: %1.2f\n robot-> x: %1.2f \t y: %1.2f\n U_att: %1.2f\t U_rep: %1.2f\t U_tot: %1.2f\n", goal.base.x, goal.base.y, robot.base.x, robot.base.y, U_att, U_rep, U_tot);
+            // ROS_INFO("ELSE TRUTA!");
+            
+
+            // res = Potential::Conic_Quadratic_transition(robo,alvo,1);
+
+
+            /*
 	        if(robot.laser.obstacle_in_path(goal.base, robot.base))
 	        {
-	        	// Oi = robot.laser.findClosestTangentPoint(goal.base, robot.base);
+	        	Oi = robot.laser.findClosestTangentPoint(goal.base, robot.base);
 	        }
 
 	        dist = pose_xy::getLinearDistance(goal.base, Oi) + pose_xy::getLinearDistance(Oi, robot.base);
@@ -596,8 +663,8 @@ int main(int argc, char **argv)
 	    			
 
 	    			goalRobotV = Controller::getRobotGoalVector(dFollow, robot.base);
-	        		// robot.move(goalRobotV.x, goalRobotV.y);
-                    robot.move(0.1, -0.1);
+	        		robot.move(goalRobotV.x, goalRobotV.y);
+                    // robot.move(0.1, -0.1);
                     ROS_INFO("Locked!");
 	    		}
 	    	}
@@ -607,6 +674,7 @@ int main(int argc, char **argv)
 	        	robot.move(goalRobotV.x, goalRobotV.y);
                 ROS_INFO("Else!");
 	        }
+            */
         }
         
 	        ros::spinOnce();
