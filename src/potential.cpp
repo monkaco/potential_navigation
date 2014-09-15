@@ -105,9 +105,10 @@ public:
 }; 
 
 
+
 class Laser{
+    public:
     sensor_msgs::LaserScan laser;
-public:
     Laser() {}
 
     void laserCallback(const sensor_msgs::LaserScan::ConstPtr& msg) 
@@ -257,7 +258,7 @@ public:
     double kv;
     double kw;
 
-    StageBot(ros::NodeHandle& nh, int robotID, double dist=0.1, double kvel = 1, double kwp = 0.05): ID(robotID) 
+    StageBot(ros::NodeHandle& nh, int robotID, double dist=0.1, double kvel = 0.5, double kwp = 0.5): ID(robotID) 
     { 
         commandPub = nh.advertise<geometry_msgs::Twist>("/robot_" + \
                                                         boost::lexical_cast<std::string>(robotID) + \
@@ -381,19 +382,21 @@ class Potential
             pose_xy returnval;
             double dist;
             double d_goal_star = trans_threshold;
-            double k_gain = 0.5;
+            double k_gain = 1.0;
             
-            dist = getLinearDistance (robo, alvo) ;
+            dist = getLinearDistance (robo, alvo);
 
             if (Conic_Quadratic_transition (robo, alvo, trans_threshold))  /* true -> quadratic function */
             {
-                returnval.x = k_gain * (alvo.x - robo.x);
-                returnval.y = k_gain * (alvo.y - robo.y);
+                returnval.y = k_gain * (robo.x - alvo.x);
+                returnval.x = k_gain * (robo.y - alvo.y);
+                ROS_INFO("Quadratico...");
             }
             else                                /* false -> conic function */
             {
-                returnval.x = d_goal_star * k_gain * (alvo.x - robo.x)/dist;
-                returnval.y = d_goal_star * k_gain * (alvo.y - robo.y)/dist;
+                returnval.y = d_goal_star * k_gain * (robo.x - alvo.x)/dist;
+                returnval.x = d_goal_star * k_gain * (robo.y - alvo.y)/dist;
+                ROS_INFO("Conico...");
             }
 
             return returnval;
@@ -451,32 +454,38 @@ class Potential
             return returnval;
          }
 
-        static pose_xy Gradient_Repulsive (pose_xy robo, pose_xy alvo)
+        static pose_xy Gradient_Repulsive (pose_xy robo, pose_xy obs, double obs_threshold)
         {
-            
-            // Q_star = obstacle_range_threshold;
-            // d_obs;   
+            pose_xy returnval;
+            double Q_star;
+            double dist;
+            double eta = 0.5;
 
             // dist = getLinearDistance (1/d_obs, 1/Q_star);
+            Q_star = obs_threshold;
+            // dist = sqrt(pow(1/obs.x, 2) + pow(1/obs.y, 2)) - 1/Q_star; 
+            dist = sqrt(pow(obs.x, 2) + pow(obs.y, 2)) - Q_star; 
 
-            // if (Obstacle_within_range (robo, alvo))  /* true -> within range */
-            // {
-            //    returnval = eta * dist * ( 1/pow(d_obs, 2) ) * Gradient_Obstacle(q_robot);
-            // }
-            // else                                 false -> conic function 
-            // {
-            //     returnval = 0.0;
-            // }
+            if (Obstacle_within_range (robo, obs, obs_threshold))  /* true -> within range */
+            {
+               returnval.x = 1/(eta * dist * sqrt( 1/pow(obs.x, 2) + 1/pow(robo.x, 2) ) * (robo.x - obs.x)/sqrt( 1/pow(robo.x, 2) + 1/pow(obs.x, 2) ));
+               returnval.y = 1/(eta * dist * sqrt( 1/pow(obs.y, 2) + 1/pow(robo.y, 2) ) * (robo.y - obs.y)/sqrt( 1/pow(robo.y, 2) + 1/pow(obs.y, 2) ));
+            }
+            else                                 /* false -> conic function */
+            {
+                returnval.x = 0.0;
+                returnval.y = 0.0;
+            }
 
-            // return returnval;
+            return returnval;
         }
             
         static pose_xy Force_Repulsive (pose_xy grad_Repulsive) 
         {
             pose_xy returnval;
             
-            returnval.x = (-1) * grad_Repulsive.x;
-            returnval.y = (-1) * grad_Repulsive.y;
+            returnval.x = (1) * grad_Repulsive.x;
+            returnval.y = (1) * grad_Repulsive.y;
 
             return returnval;
         }
@@ -498,6 +507,15 @@ class Potential
             
             returnval.x = grad_Attractive.x + grad_Repulsive.x;
             returnval.y = grad_Attractive.y + grad_Repulsive.y;
+
+            if (returnval.x > 5.0 || returnval.x < -5.0)
+            {
+                returnval.x = 5.0;
+            }
+            else if (returnval.y > 5.0 || returnval.y < -5.0)
+            {
+                returnval.y = 5.0;
+            }
 
             return returnval;
         }
@@ -557,7 +575,7 @@ int main(int argc, char **argv)
     StageBot goal(n, 1); 
     Controller controller; 
 
-    double K = 2.0; 
+    double K = 0.2; 
     pose_xy Oi, goalRobotV;
     double dist;
     double last_dist=0;
@@ -569,8 +587,8 @@ int main(int argc, char **argv)
 
     Potential pot();
     Laser laser1;
-    double transition_threshold = 0.4;
-    double obstacle_range_threshold = 2.0;
+    double transition_threshold = 0.8;
+    double obstacle_range_threshold = 0.3;
     double U_att;
     double U_rep;
     double U_tot;
@@ -581,12 +599,13 @@ int main(int argc, char **argv)
     pose_xy force_rep;
     pose_xy force_tot;
     pose_xy laser_dist;
-    // U_att = Attractive_Potential ():
-    // U_rep = Repulsive_Potential ();
-    // U_tot = U_att + U_rep;
-    // grad_U_att = Gradient_Attractive ();
-    // grad_U_rep = Gradient_Repulsive ();
-    // double K_gain;
+    float test;
+
+    double minimum = 4.0;
+    double min_aux;
+    int min_index = 0;
+    double ang_point;
+    pose_xy nearest_obs;
 
     ros::Rate rate(20); 
 
@@ -598,9 +617,7 @@ int main(int argc, char **argv)
     	rate.sleep();
     	ros::spinOnce();
 
-        Laser::laserCallback();
-
-        
+                
     	if (pose_xy::getLinearDistance(goal.base, robot.base) < 0.1)
     	{
     		ROS_INFO("GOAL REACHED!");
@@ -611,6 +628,9 @@ int main(int argc, char **argv)
 		}
 		else
 		{
+            robot.laser;
+            test = robot.laser.laser.ranges[0];
+
 
             U_att = Potential::Attractive_Potential (robot.base, goal.base, transition_threshold);
             U_rep = Potential::Repulsive_Potential (robot.base, goal.base, obstacle_range_threshold);
@@ -618,63 +638,43 @@ int main(int argc, char **argv)
 
             grad_U_att = Potential::Gradient_Attractive (robot.base, goal.base, transition_threshold);
             force_att = Potential::Force_Attractive (grad_U_att);
-            robot.move(0,0);
 
-            //laser_dist = Laser::getMinimumDistanceRobotToPoint (goal.base, robot.base);
-            laser_dist = laser1.getMinimumDistanceRobotToPoint (goal.base, robot.base);
-
-            printf("goal->  x: %1.2f \t y: %1.2f\n robot-> x: %1.2f \t y: %1.2f\n laser_dist.x: %1.2f\t laser_dist.y: %1.2f\t U_tot: %1.2f\n", goal.base.x, goal.base.y, robot.base.x, robot.base.y, laser_dist.x, laser_dist.y, U_tot);
-            ROS_INFO("ELSE TRUTA!");
+            minimum = robot.laser.laser.range_max;
+            for(int i = 0; i < robot.laser.laser.ranges.size(); i++)
+            {   
+                // min_aux = robot.laser.laser.ranges[i];
+                // robot.laser.laser.range_min
+                // if ((min_aux > 0.1) && (min_aux < minimum))
+                if ((robot.laser.laser.ranges[i] > 0.1) && (robot.laser.laser.ranges[i] < minimum))
+                {
+                    minimum = robot.laser.laser.ranges[i];
+                    min_index = i;
+                    // ROS_INFO("### if ###");
+                }
+                // printf("minimum: %1.2f\t range: %1.2f \n", minimum, robot.laser.laser.ranges[i]);
+                // printf("range: %1.2f \n", robot.laser.laser.ranges[i]);
+            }
             
-            // U_att = Potential::Attractive_Potential(robot.base,goal.base);
-            // U_att = pot.Attractive_Potential (robo, alvo);
-            // grad_U_att = pot.Gradient_Attractive (robo, alvo);
-
-            // alvo = Laser::getMinimumDistanceRobotToPoint(dFollowp,robo);
             
-            
-            // dFollowp = Potential::getAngularDistance (robot.base, goal.base);
-            // U_att = Potential::Attractive_Potential (robot.base, goal.base, K);
-            // printf("goal->  x: %1.2f \t y: %1.2f\n robot-> x: %1.2f \t y: %1.2f\n U_att: %1.2f\t U_rep: %1.2f\t U_tot: %1.2f\n", goal.base.x, goal.base.y, robot.base.x, robot.base.y, U_att, U_rep, U_tot);
-            // ROS_INFO("ELSE TRUTA!");
-            
+            // ang_point = robot.base.heading - (robot.laser.laser.angle_increment * min_index + robot.laser.laser.angle_min);
+            ang_point = robot.laser.laser.angle_increment * min_index - (robot.laser.laser.angle_max - robot.base.heading);
 
-            // res = Potential::Conic_Quadratic_transition(robo,alvo,1);
+            nearest_obs.x = robot.base.x + minimum*cos(ang_point);
+            nearest_obs.y = robot.base.y + minimum*sin(ang_point);
+            nearest_obs.heading = ang_point;
 
+            grad_U_rep = Potential::Gradient_Repulsive (robot.base, nearest_obs, obstacle_range_threshold);
+            force_rep = Potential::Force_Repulsive(grad_U_rep);
 
-            /*
-	        if(robot.laser.obstacle_in_path(goal.base, robot.base))
-	        {
-	        	Oi = robot.laser.findClosestTangentPoint(goal.base, robot.base);
-	        }
+            force_tot = Potential::Force_Total (force_att, force_rep);
 
-	        dist = pose_xy::getLinearDistance(goal.base, Oi) + pose_xy::getLinearDistance(Oi, robot.base);
-	        
-	        //boundary following behavior!
-	        if(dist > last_dist)
-	    	{
-	    		// dReached = pose_xy::getLinearDistance(goal.base, robot.base);
-	    		// dFollowp = robot.laser.findClosestTangentPoint(goal.base, robot.base);
-	    		// dFollow = pose_xy::getLinearDistance(dFollowp, goal.base);
-	    		while(dReached >= dFollow)
-	    		{
-	    			rate.sleep();
-	    			ros::spinOnce();
-	    			
+             // robot.move(0,0);
+            robot.move(force_tot.x, force_tot.y);
+            printf("f_att.x: %1.2f\t f_att.y: %1.2f\n f_rep.x: %1.2f\t f_rep.y: %1.2f \n f_tot.x: %1.2f\t f_tot.y: %1.2f \n", force_att.x, force_att.y,force_rep.x, force_rep.y,force_tot.x, force_tot.y);
+            printf("nearest_obs.x: %1.2f\t nearest_obs.y: %1.2f\t nearest_angle: %1.2f\t min_index: %d",  nearest_obs.x, nearest_obs.y, ang_point, min_index);
+            // printf("robot->  x: %1.2f \t y: %1.2f\n laser-> x: %1.2f \t y: %1.2f\n nearest_obs.x: %1.2f\t nearest_obs.y: %1.2f\t min.laser.ranges: %1.2f\n", robot.base.x, robot.base.y, robot.base.x, robot.base.y, nearest_obs.x, nearest_obs.y, minimum);
+           
 
-	    			goalRobotV = Controller::getRobotGoalVector(dFollow, robot.base);
-	        		robot.move(goalRobotV.x, goalRobotV.y);
-                    // robot.move(0.1, -0.1);
-                    ROS_INFO("Locked!");
-	    		}
-	    	}
-	        else
-	        {
-	        	goalRobotV = Controller::getRobotGoalVector(goal.base, robot.base);
-	        	robot.move(goalRobotV.x, goalRobotV.y);
-                ROS_INFO("Else!");
-	        }
-            */
         }
         
 	        ros::spinOnce();
